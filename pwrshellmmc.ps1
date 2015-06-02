@@ -39,12 +39,12 @@
 #
 # When you run the script the syntax is as follows:
 #
-# PS c:\> pwrshellmmc.ps1 <windows_cred_store_target_URI>
+# PS c:\> .\pwrshellmmc.ps1 <windows_cred_store_target_URI>
 #
 # For example, if I created a Windows Credential Manager entry titled "marctme" I would run the
 # script as: 
 # 
-# PS c:\> pwrshellmmc.ps1 marctme
+# PS c:\> .\pwrshellmmc.ps1 marctme
 #
 # See the script comments throughout the script for further details on how this works
 #
@@ -58,8 +58,6 @@
 # Version 1.0 includes:
 # -Add share
 # -Remove share
-# -Add acl
-# -Remove acl
 # -include parameter for grabbing and storing credentials to connect to SVM using Windows Credential
 #  Manager (Windows 7 and later)
 #
