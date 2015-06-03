@@ -22,7 +22,7 @@
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") 
 
 $objForm = New-Object System.Windows.Forms.Form 
-$objForm.Text = "Create SMB Server"
+$objForm.Text = "Create SMB Share"
 $objForm.Size = New-Object System.Drawing.Size(300,300) 
 $objForm.StartPosition = "CenterScreen"
 
