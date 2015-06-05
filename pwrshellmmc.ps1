@@ -506,7 +506,7 @@ if ($initoptions -eq 2)
                           Write-host "What user or group are you adding to the SHARE ACL?" -foregroundcolor Green
                           #$grpusername = Read-Host "Enter in the user or group name in the format of domainName\userName or domainName\groupName or everyone"
                           
-                          [array]$grpusername = (Read-Host “User or Group (separate with comma)”).split(“,”)
+                          [array]$grpusername = (Read-Host “User or Group (can specify multiple entries separated by a comma)”).split(“,”)
                           
                           if ($grpusername -eq ""){write-host "error:Please enter in a user or group name, cannot be blank" -foregroundcolor Red}; if ($grpusername -eq $NULL) {write-host "error: Please enter in a user or group name, cannot be blank" -foregroundcolor Red}
 
