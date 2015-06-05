@@ -220,6 +220,7 @@ Write-host
 Write-host "This script will allow you to:"
 Write-host ""
 Write-host "   **Add / Remove a share" -foregroundcolor white
+write-host "   **Add / Remove / Modify share ACLs" -foregroundcolor white
 write-host ""
 
 Do {
