@@ -19,7 +19,7 @@
 #
 # Running the script:
 # -------------------
-# There is a single parameter needed in order to successfully run the script.  The parameter will
+# There are two parameters needed in order to successfully run the script.  The 1st parameter will
 # build a credential using a Powershell Module available from the following site:
 #
 # https://gist.github.com/cdhunt/5729126/download#
@@ -39,14 +39,14 @@
 #
 # When you run the script the syntax is as follows:
 #
-# PS c:\> .\pwrshellmmc.ps1 <windows_cred_store_target_URI>
+# PS c:\> pwrshellmmc.ps1 <windows_cred_store_target_URI> <svmMgmt_Lif_IP_Hostname>
 #
-# For example, if I created a Windows Credential Manager entry titled "marctme" I would run the
-# script as: 
+# For example, if I created a Windows Credential Manager entry titled "marctme" and was conneting
+# to the "tenantA" svm I would run the script as: 
 # 
-# PS c:\> .\pwrshellmmc.ps1 marctme
+# PS c:\> pwrshellmmc.ps1 marctme tenantA
 #
-# See the script comments throughout the script for further details on how this works
+# See the comments throughout the script for further details on how the script works
 #
 #
 # SCRIPT VERSION HISTORY
@@ -58,17 +58,65 @@
 # Version 1.0 includes:
 # -Add share
 # -Remove share
+# -Add acl
+# -Remove acl
 # -include parameter for grabbing and storing credentials to connect to SVM using Windows Credential
 #  Manager (Windows 7 and later)
 #
+# Date - 06/05/2015
+# Script version 1.1
+# 
+# Version 1.1 includes:
+# -added connectnc function to build re-usable code to insert for the various workflows for SVM logins
+# -added option to manage share ACLs
+# -changed the code to require two parameters when running the script: credential manager and SVMName
+#
 # ###############################################################################################
 # ###############################################################################################
 
 
 #
-# This section uses the optional parameter passed upon script run that will build and store a 
-# credential in order to connect to the SVM to complete the tasks.
-# 
+# This builds two required parameters that are passed via the CLI when
+# running the script.  
+#
+param(
+[Parameter(Position = 1)]
+[string]
+[ValidateNotNullOrEmpty]
+$wincredstor,
+[Parameter(Position = 2)]
+[string]
+[ValidateNotNullOrEmpty]
+$svmmgtlif
+     )
+
+#
+# Commented out this section and used a verifier in the paramter statement above
+# It will confirm that the required parameters are provided
+#
+#if([string]::IsNullOrEmpty($wincredstor))
+#
+#{
+#    write-host ""
+#    write-host "You must supply Windows credential manager target URI, for example:" -ForegroundColor Green
+#    write-host ""
+#    write-host "PS C:\data\scripts> .\pwrshellmmc.ps1 marctmesvm" -ForegroundColor Red
+#    write-host ""
+#    write-host "Where marctmesvm is an entry created in the local Windows clients" -ForegroundColor Green
+#    write-host "Windows Credential Store." -foregroundcolor green
+#    write-host ""
+#    write-host "For more details on Windows Credential Manager see the following:" -ForegroundColor Green
+#    write-host "http://windows.microsoft.com/en-us/windows7/what-is-credential-manager" -ForegroundColor Green
+#    write-host ""
+#    return
+#}
+
+
+#
+# Building credential function.  It will use (2) parameters passed from the CLI and noted above in the script
+# The function will be called later in the script based on the option selected.  This will keep from having
+# to write separate connect-nccontroller entries in other sections
+#
 # It sets the Powershell execution policy to bypass in order to allow the script to run 
 # without being prompted with a security warning.  Please note that you will need to run
 # the script in an environment that you have confirmed is secure.  The parameter $wincredstor
@@ -77,35 +125,24 @@
 #
 # Please consult your own internal security requirements before using the script in production
 # to ensure it meets your environments internal security requirements.
-#
-param(
-[string]$wincredstor
-)
-
-if([string]::IsNullOrEmpty($wincredstor))
-{
-    write-host ""
-    write-host "You must supply Windows credential manager target URI, for example:" -ForegroundColor Green
-    write-host ""
-    write-host "PS C:\data\scripts> .\pwrshellmmc.ps1 marctmesvm" -ForegroundColor Red
-    write-host ""
-    write-host "Where marctmesvm is an entry created in the local Windows clients" -ForegroundColor Green
-    write-host "Windows Credential Store." -foregroundcolor green
-    write-host ""
-    write-host "For more details on Windows Credential Manager see the following:" -ForegroundColor Green
-    write-host "http://windows.microsoft.com/en-us/windows7/what-is-credential-manager" -ForegroundColor Green
-    write-host ""
-    return
-}
-
 Set-ExecutionPolicy bypass
 $svmcredstore = get-storedcredential $wincredstor
 
+#
+# Function created to call when connect to the SVM is necessary
+# Easier than extra coding of the connect-nccontroller cmdlet
+#
+function Connectnc
+{
+Connect-NcController $svmmgtlif -Credential $svmcredstore | format-table -property name,version | out-null
+}
+
+#
+# Checks to make sure script is run by an Admin
+#
 function Run-As 
 
 {
-
-# Checks to make sure script is run by an Admin
 
 param([Switch]$Check)
 
@@ -168,7 +205,6 @@ Write-host ""
 #Launching run-as function
 
 Run-as
- 
 
 #Cleaning screen
 
@@ -192,16 +228,18 @@ Write-host "####################################################################
 Write-host ""
 Write-host "Please select from the following options:" -foregroundcolor cyan
 Write-host "Option 1: Add / Remove SMB Share" -foregroundcolor White
-Write-host
+Write-host "Option 2: New / Remove / Modify SMB Share ACL" -foregroundcolor white
+Write-host ""
 Write-host ""
 Write-host "#####################################################################" -foregroundcolor Green
 Write-host "#####################################################################" -foregroundcolor Green
 Write-host ""
-$initoptions = Read-host "Please enter 1 (future options will be added for additional Windows File Services management)"
+$initoptions = Read-host "Please enter 1 or 2"
 
 write-host
 
-} until ($initoptions -eq "1")
+} until ($initoptions -eq "1" -or $initoptions -eq "2")
+
 
 
 
@@ -245,28 +283,12 @@ if ($initoptions -eq 1)
           add{
           
           
-                          DO {
+                          DO {                                                    
                           #
-                          # Requests the IP of an SVM management LIF on a node in the cDOT cluster that can accept the command
-                          #
-                          DO{
-                          Write-host
-                          Write-host "Enter in an SVM management LIF IP or hostname?" -foregroundcolor Green
-                          $svmip = Read-Host "Enter a management LIF IP or hostname for the SVM where the share will reside"
-
-                          if ($svmip -eq ""){write-host "error:Please enter in LIF details, cannot be blank" -foregroundcolor Red}
-                         
-                          Write-host
-
-                          } while  ($svmip -eq "" -or $svmip -eq $NULL)
-                          
-                          Write-host                   
-                      
-                          #
-                          # Connect to the SVM using the credential details pulled from 
-                          # Windows Credential Manager
-                          #
-                          Connect-NcController $svmip -Credential $svmcredstore | format-table -property name,version | out-null                    
+                          # Calling the connectnc function
+                          # This will connect to the SVM provided when the script was started
+                          #       
+                          connectnc
                           #
                           # Requests the name of the SVM where the share is to be created
                           #
@@ -312,7 +334,7 @@ if ($initoptions -eq 1)
                           ##################################################################################
                           
                           write-host "******************************************************************************" -backgroundcolor Blue
-                          write-host " This is a list of volumes and their junction paths available on $svmip " -foregroundColor white
+                          write-host " This is a list of volumes and their junction paths available on $svmname" -foregroundColor white
                           write-host "******************************************************************************" -backgroundcolor Blue
 
                           #
@@ -350,26 +372,12 @@ if ($initoptions -eq 1)
                     
           }
           
-          remove{
+          remove{                         
                           #
-                          # Requests the IP of a management LIF or the hostname associated with the 
-                          # SVM management for the SVM in cDOT
+                          # Connect to SVM function
+                          # Calling the connectnc function to establish connection to the SVM
                           #
-                          DO{
-                          Write-host
-                          Write-host "Enter in an SVM management LIF IP or hostname?" -foregroundcolor Green
-                          $svmip = Read-Host "Enter a management LIF IP or hostname for the SVM where the share will reside"
-
-                          if ($svmip -eq ""){write-host "error:Please enter in LIF details, cannot be blank" -foregroundcolor Red}
-                         
-                          Write-host   
-                          } while ($svmip -eq "" -or $svmip -eq $NULL)
-                         
-                          #
-                          # Connect to the SVM provided when prompted above. It will
-                          # use the credential retrieved from the Windows Credential Manager
-                          #
-                          Connect-NcController $svmip -credential $svmcredstore | format-table -property name,version | out-null
+                          connectnc
 
                           #
                           # Requests the name of the SVM where the share is to be removed
@@ -424,4 +432,327 @@ if ($initoptions -eq 1)
           
         }
         
+}
+
+##########################
+# If they select option 2
+# jump to here
+##########################
+if ($initoptions -eq 2)
+
+{
+
+#
+#  Add, Remove or Modify and existing share ACL
+#
+ Do { 
+    
+    #launching the connc function which will connect to the SVM
+    Connectnc
+
+    Write-host "STARTING ADD/REMOVE/MODIFY SHARE PERMISSIONS" -foregroundcolor CYAN
+    write-host ""
+    Write-host "Do you want to add(new), remove or modify(existing) share permissions?" -foregroundcolor green
+    $armacl = read-host "Please enter add, remove or modify"
+
+    Write-host 
+    } until ($armacl -eq "add" -or $armacl -eq "remove" -or $armacl -eq "modify")
+
+    #
+    # Using the switch Powershell statement to keep from having nested and confusing if statements
+    #
+
+    switch ($armacl)
+        {
+            add{
+                          #
+                          # Add NEW ACL entry to the share
+                          #  
+                          DO{
+
+                          # Obtaining CIFS Server name to pull list CIFS shares
+                          write-host
+                          write-host "What is the name of the CIFS server where the share resides?" -ForegroundColor Green
+                          $cdotcifssvr = Read-Host "Enter the CIFS server name"
+
+                          if ($cdotcifssvr -eq ""){write-host "error:Please enter in the CIFS server, cannot be blank" -foregroundcolor Red}
+
+                          #Pull list of sharenames and their path
+                          write-host ""
+                          write-host "####################################################" -ForegroundColor Green                          
+                          write-host "This is a list of shares on CIFS server:" -foregroundcolor White -NoNewline; write-host "  $cdotcifssvr"
+                          write-host "####################################################" -ForegroundColor Green
+
+                          $aclchange = Get-NcCifsShare -Template
+                          $aclchange.cifsserver = "$cdotcifssvr"
+                          Get-NcCifsShare -Query $aclchange | select sharename,path | ft -AutoSize
+                          
+                          Write-host
+                          Write-host "What is the name of the share to add the ACL to?" -foregroundcolor Green
+                          $csharename = Read-Host "Enter the name of the share"
+
+                          if ($csharename -eq ""){write-host "error:Please enter in the share name, cannot be blank" -foregroundcolor Red}
+                         
+                          Write-host
+
+                          } while ($csharename -eq "" -or $csharename -eq $NULL)                         
+                             
+                          #
+                          # This section asks for a username or group to add to the ACL.
+                          #
+                          DO{
+                          Write-host
+                          Write-host "What user or group are you adding to the SHARE ACL?" -foregroundcolor Green
+                          #$grpusername = Read-Host "Enter in the user or group name in the format of domainName\userName or domainName\groupName or everyone"
+                          
+                          [array]$grpusername = (Read-Host “User or Group (separate with comma)”).split(“,”)
+                          
+                          if ($grpusername -eq ""){write-host "error:Please enter in a user or group name, cannot be blank" -foregroundcolor Red}; if ($grpusername -eq $NULL) {write-host "error: Please enter in a user or group name, cannot be blank" -foregroundcolor Red}
+
+                          Write-host
+                          } while ($grpusername -eq "" -or $grpusername -eq $NULL)
+    
+          
+                          # 
+                          # Requests the type of permissions to set on the share itself.  There are only 3 options, all will be listed in the command
+                          # 
+                          DO {
+                          Write-host
+                          Write-host "What permission do you want to set for the user or group?" -foregroundcolor Green
+                          $newshareperms = Read-Host "Enter the permissions: no_access, read, change or full_control"
+                          
+                          if ($newshareperms -eq ""){write-host "error:Please enter in permissions, cannot be blank" -foregroundcolor Red}
+                           
+                          Write-host
+                          } until ($newshareperms -eq "no_access" -or $newshareperms -eq "read" -or $newshareperms -eq "change" -or $newshareperms -eq "full_control")  
+                          
+                          
+                                                       
+                          #
+                          # Requests the name of the SVM where the share is to be created
+                          #
+                          DO {
+                          Write-host
+                          Write-host "What is the name of the Data SVM that houses the share to be removed?" -foregroundcolor Green
+                          $svmname = Read-Host "Enter the name of the SVM that houses the share"
+
+                          if ($svmname -eq ""){write-host "error:Please enter in SVM name, cannot be blank" -foregroundcolor Red}
+                         
+                          Write-host
+
+                          } while ($svmname -eq "" -or $svmname -eq $NULL)                                    
+                          
+                          #
+                          # Get the date and time for reporting a conclusion
+                          #
+                          $stime = get-date 
+
+                          # Create the share and set initial permissions on the share
+                          #Connect-NcController $svmip -credential $adminuser | format-table -property name,version | out-null                                                                   
+
+                          
+                          foreach ($userorgroup in $grpusername)
+                          {
+                          add-nccifsshareacl -share $csharename -userorgroup $userorgroup -permission $newshareperms -vservercontext $svmname
+                          }                                                
+
+                          write-host $stime
+                          write-host "New share ACL added on share" $csharename "on SVM" $svmname "for the following user or group" $grpusername
+
+                          Read-host "Press the ENTER key to close..."         
+          
+            }
+          
+          
+          remove{
+                         #
+                         # Remove ACL entry on a share
+                         #  
+                         DO{
+
+
+                          # Obtains the CIFS server name to use it later to pull list of shares for that CIFS server
+                          write-host
+                          write-host "What is the name of the CIFS server where the share resides?" -ForegroundColor Green
+                          $cdotcifssvr = Read-Host "Enter the CIFS server name"
+
+                          if ($cdotcifssvr -eq ""){write-host "error:Please enter in the CIFS server, cannot be blank" -foregroundcolor Red}
+
+                          write-host ""
+                          write-host "####################################################" -ForegroundColor Green                          
+                          write-host "This is a list of shares on CIFS server:" -foregroundcolor White -NoNewline; write-host "  $cdotcifssvr"
+                          write-host "####################################################" -ForegroundColor Green
+
+                          #Pulls just the list of shares and their paths
+                          $aclchange = Get-NcCifsShare -Template
+                          $aclchange.cifsserver = "$cdotcifssvr"
+                          Get-NcCifsShare -Query $aclchange | select sharename,path | ft -AutoSize
+                          ###New stuff end 0504_1335
+                          
+                         Write-host
+                         Write-host "What is the name of the share to REMOVE the ACL on?" -foregroundcolor Green
+                         $csharename = Read-Host "Enter the name of the share"
+
+                         
+                         if ($csharename -eq ""){write-host "error:Please enter in the share name, cannot be blank" -foregroundcolor Red}
+                         
+                         Write-host
+
+                         } while ($csharename -eq "" -or $csharename -eq $NULL)                                       
+          
+          
+                         #
+                         # This section asks for a username or group to remove from to the share ACL.
+                         #
+                         DO{                         
+
+                         # Obtains the ACL for the requested share
+                         write-host "These are the share permissions for the share:" -ForegroundColor red -NoNewline ; write-host "  $csharename"
+                         $aclchangeshare = Get-NcCifsShareacl -Template
+                         $aclchangeshare.share = "$csharename"
+                         Get-NcCifsShareacl -Query $aclchangeshare | select userorgroup | format-list                          
+                         
+                         Write-host "What user or group do you want to remove from the SHARE ACL?" -foregroundcolor Green
+                         #$grpusername = Read-Host "Enter in the user or group name in the format of domainName\userName or domainName\groupName or everyone"
+
+                         [array]$grpusername = (Read-Host “User or Group (can specify multiple entries separated by a comma)”).split(“,”)
+
+                         if ($grpusername -eq ""){write-host "error:Please enter in a user or group name, cannot be blank" -foregroundcolor Red}; if ($grpusername -eq $NULL) {write-host "error: Please enter in a user or group name, cannot be blank" -foregroundcolor Red}
+
+                         Write-host
+                         } while ($grpusername -eq "" -or $grpusername -eq $NULL)
+     
+          
+                         #
+                         # Requests the name of the SVM where the share is to be removed
+                         #
+                         DO {
+                         Write-host
+                         Write-host "What is the name of the Data SVM that houses the share to be removed?" -foregroundcolor Green
+                         $svmname = Read-Host "Enter the name of the SVM that houses the share"
+
+                         if ($svmname -eq ""){write-host "error:Please enter in SVM name, cannot be blank" -foregroundcolor Red}
+                         
+                         Write-host
+
+                         } while ($svmname -eq "" -or $svmname -eq $NULL)     
+                                                 
+                         #
+                         # Get the date and time for reporting a conclusion
+                         #
+                         $stime = get-date 
+
+                         # Create the share and set initial permissions on the share
+                         #Connect-NcController $svmip -credential $adminuser | format-table -property name,version | out-null
+
+                         foreach ($userorgroup in $grpusername)
+                          {
+                          remove-nccifsshareacl -share $csharename -userorgroup $userorgroup
+                          } 
+
+                         #remove-nccifsshareacl -share $csharename -userorgroup $grpusername -vservercontext $svmname
+
+                         write-host $stime
+                         write-host "Share ACL removed from share" $csharename "on SVM" $svmname
+
+                         Read-host "Press the ENTER key to close..."                                                   
+          }
+        
+          modify{
+          
+                         #
+                         # Modify ACL entry on a share
+                         #  
+                         DO{
+
+                         # Obtains CIFS server name and retrieves list of shares for that CIFS server
+                         write-host
+                         write-host "What is the name of the CIFS server where the share resides?" -ForegroundColor Green
+                         $cdotcifssvr = Read-Host "Enter the CIFS server name"
+
+                           if ($cdotcifssvr -eq ""){write-host "error:Please enter in the CIFS server, cannot be blank" -foregroundcolor Red}
+
+                         $aclchange = Get-NcCifsShare -Template
+                         $aclchange.cifsserver = "$cdotcifssvr"
+                         #Get-NcCifsShare -Query $aclchange | select sharename,acl,path | ft -AutoSize
+                         Get-NcCifsShare -Query $aclchange | select sharename,path | ft -AutoSize
+                         
+                         Write-host
+                         Write-host "What is the name of the share that you want to MODIFY an existing ACL on?" -foregroundcolor Green
+                         $csharename = Read-Host "Enter the name of the share"
+
+                         if ($csharename -eq ""){write-host "error:Please enter in the share name, cannot be blank" -foregroundcolor Red}
+                         
+                         Write-host
+
+                         } while ($csharename -eq "" -or $csharename -eq $NULL)
+                         
+                         #
+                         # This section asks for a username or group to modify the ACL entry for.
+                         # It retrieves the share ACL to display to the user
+                         #
+                         DO{
+
+                         # Obtains the ACL for the requested share
+                         write-host "##############################################################" -ForegroundColor Green
+                         write-host "These are the share permissions for the share:" -ForegroundColor red -NoNewline ; write-host "  $csharename"
+                         write-host "##############################################################" -ForegroundColor Green
+                         $aclchangeshare = Get-NcCifsShareacl -Template
+                         $aclchangeshare.share = "$csharename"
+                         Get-NcCifsShareacl -Query $aclchangeshare | select userorgroup | format-list
+
+                         Write-host "What user or group are you modifying on the SHARE ACL?" -foregroundcolor Green
+                         write-host "You must select from the ACL entries returned above!" -foregroundcolor Red
+                         
+                         [array]$grpusername = (Read-Host “User or Group (can specify multiple entries separated by a comma)”).split(“,”)
+
+                         if ($grpusername -eq ""){write-host "error:Please enter in a user or group name, cannot be blank" -foregroundcolor Red}; if ($grpusername -eq $NULL) {write-host "error: Please enter in a user or group name, cannot be blank" -foregroundcolor Red}
+
+                         Write-host
+                         } while ($grpusername -eq "" -or $grpusername -eq $NULL)                         
+                         
+                         # 
+                         # Requests the type of permissions to set on the share itself.  There are only 3 options, all will be listed in the command
+                         # 
+                         DO {
+                         Write-host
+                         Write-host "What permission do you want to set for the user or group?" -foregroundcolor Green
+                         $newshareperms = Read-Host "Enter the permissions: no_access, read, change or full_control"
+                          
+                         if ($newshareperms -eq ""){write-host "error:Please enter in permissions, cannot be blank" -foregroundcolor Red}
+                          
+                         Write-host
+                         } until ($newshareperms -eq "no_access" -or $newshareperms -eq "read" -or $newshareperms -eq "change" -or $newshareperms -eq "full_control")                                                  
+                           
+                         #
+                         # Requests the name of the SVM where the share is to be modified
+                         #
+                         DO {
+                         Write-host
+                         Write-host "What is the name of the Data SVM that houses the share to be removed?" -foregroundcolor Green
+                         $svmname = Read-Host "Enter the name of the SVM that houses the share"
+
+                         if ($svmname -eq ""){write-host "error:Please enter in SVM name, cannot be blank" -foregroundcolor Red}
+                         
+                         Write-host
+
+                         } while ($svmname -eq "" -or $svmname -eq $NULL)
+          
+                         
+                         # Changes the ACL entry based on the above questions
+
+                         foreach ($userorgroup in $grpusername)
+                          {
+                          set-nccifsshareacl -share $csharename -userorgroup $userorgroup -permission $newshareperms
+                          } 
+
+                         write-host $stime
+                         write-host "Share ACL modifed for user or group named" $grpusername "on share" $csharename "on SVM" $svmname
+
+                         Read-host "Press the ENTER key to close..."                     
+          
+          }
+        
+        
+        }
 }
