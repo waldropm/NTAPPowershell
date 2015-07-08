@@ -71,6 +71,9 @@
 # -added option to manage share ACLs
 # -changed the code to require two parameters when running the script: credential manager and SVMName
 #
+# Version 1.2 includes:
+# -added in ability to view and close CIFS sessions
+#
 # ###############################################################################################
 # ###############################################################################################
 
@@ -220,7 +223,6 @@ Write-host
 Write-host "This script will allow you to:"
 Write-host ""
 Write-host "   **Add / Remove a share" -foregroundcolor white
-write-host "   **Add / Remove / Modify share ACLs" -foregroundcolor white
 write-host ""
 
 Do {
@@ -230,16 +232,17 @@ Write-host ""
 Write-host "Please select from the following options:" -foregroundcolor cyan
 Write-host "Option 1: Add / Remove SMB Share" -foregroundcolor White
 Write-host "Option 2: New / Remove / Modify SMB Share ACL" -foregroundcolor white
+Write-host "Option 3: View / Close SMB Client Sessions" -foregroundcolor white
 Write-host ""
 Write-host ""
 Write-host "#####################################################################" -foregroundcolor Green
 Write-host "#####################################################################" -foregroundcolor Green
 Write-host ""
-$initoptions = Read-host "Please enter 1 or 2"
+$initoptions = Read-host "Please enter 1, 2 or 3"
 
 write-host
 
-} until ($initoptions -eq "1" -or $initoptions -eq "2")
+} until ($initoptions -eq "1" -or $initoptions -eq "2" -or $initoptions -eq "3")
 
 
 
@@ -506,7 +509,7 @@ if ($initoptions -eq 2)
                           Write-host "What user or group are you adding to the SHARE ACL?" -foregroundcolor Green
                           #$grpusername = Read-Host "Enter in the user or group name in the format of domainName\userName or domainName\groupName or everyone"
                           
-                          [array]$grpusername = (Read-Host “User or Group (can specify multiple entries separated by a comma)”).split(“,”)
+                          [array]$grpusername = (Read-Host “User or Group (separate with comma)”).split(“,”)
                           
                           if ($grpusername -eq ""){write-host "error:Please enter in a user or group name, cannot be blank" -foregroundcolor Red}; if ($grpusername -eq $NULL) {write-host "error: Please enter in a user or group name, cannot be blank" -foregroundcolor Red}
 
@@ -755,5 +758,112 @@ if ($initoptions -eq 2)
           }
         
         
+        }
+}
+
+##########################
+# If they select option 3
+# jump to here
+##########################
+if ($initoptions -eq 3)
+
+{
+#
+#  Manage SMB Client Sessions
+#
+ Do { 
+    
+    #launching the connc function which will connect to the SVM
+    Connectnc
+
+    Write-host "STARTING CLIENT SESSION MANAGEMENT WORKFLOW" -foregroundcolor CYAN
+    write-host ""
+    Write-host "What do you want to do: view or close open sessions?" -foregroundcolor green
+    $sessvwcls = read-host "Please enter view or close"
+
+    Write-host 
+    } until ($sessvwcls -eq "view" -or $sessvwcls -eq "close")
+
+    #
+    # Using the switch Powershell statement to keep from having nested and confusing if statements
+    #
+
+    switch ($sessvwcls)
+        {
+            view{
+                          #
+                          # Pull list of open sessions
+                          #  
+                          DO{
+
+                          # Determine whether view all users or specific users
+                          write-host
+                          write-host "Do you want to view all sessions or check for a specific user?" -ForegroundColor Green
+                          $sessallorone = Read-Host "Enter all or single"
+
+                          if ($sessallorone -eq ""){write-host "error:Please enter in all or single, cannot be blank" -foregroundcolor Red}
+
+                          Write-host
+
+                          } while ($sessallorone -eq "" -or $sessallorone -eq $NULL)
+
+                          switch ($sessallorone)
+                             {
+                                
+                                  all{                                  
+                                  $allusersess = Get-NcCifssession
+                                  get-nccifssession | format-table -Property windowsuser,address,connectedtime,files,issessionsigned,node,lifaddress,protocolversion
+                                     }
+
+                                  single{
+                                  write-host "Single was chosen"
+                                  # Determine which user to display
+                                  write-host
+                                  write-host "Please enter in a single username (domain\username) or IP address of a client?" -ForegroundColor Green
+                                  $sesssingle = Read-Host "Enter username or client ip address"
+                                  write-host
+                                  # Assumes IP first and will check for session with IP
+                                  $sesssingleIP = Get-NcCifssession | where address -contains $sesssingle
+
+                                  # Conditional check, if the output of the IP is null then it will assume username entered and pull username details
+                                  # Probably a more efficient way to do this                                                                                                     
+                                  if ($sesssingleIP -eq $Null)
+                                  {
+                                  get-nccifssession | where windowsuser -eq $sesssingle | select windowsuser,address,connectedtime,files,issessionsigned,node,lifaddress,protocolversion | format-list
+                                  } 
+                                  else
+                                  { 
+                                  Get-NcCifssession | where address -eq $sesssingle | select windowsuser,address,connectedtime,files,issessionsigned,node,lifaddress,protocolversion | format-list
+                                  }
+                                  
+                                                                    
+                                  }                                                                
+                                                                   
+                              }
+                              
+               }
+        #Close start
+        close{
+
+        # Build a hash table of all the sessions and store them in a variable that will be used later to retrieve
+        # the correct session for closure.  The unique key will be by Address, so if a host connects multiple times
+        # from the same host, it will group them in a single entry in the has table as a Count N+     
+        $sesshash = get-nccifssession | select windowsuser,address,lifaddress,node,sessionid | Group-Object -Property address -ashashtable              
+
+        # Get the list of active sessions and display to the user just what is generally needed to close a session
+        # The session is SVM-wide and not tied to a node. 
+        Get-NcCifsSession | select address,windowsuser,node,sessionid | format-table -autosize
+             
+        # Request the session the user would like to close.  They have to use address as its the most likely to be unique                 
+         Write-host
+         Write-host "What session do you want to close?" -foregroundcolor Green
+         $sessselect = Read-Host "Enter an IP address from the above list"                   
+                 
+         #Use the hash table entry for the IP address specified to close sessions
+         Close-NcCifsSession -node $sesshash.item("$sessselect").node -Address $sesshash.item("$sessselect").address -SessionId $sesshash.item("$sessselect").sessionid
+                           
+         }
+        
+        #Close end
         }
 }
