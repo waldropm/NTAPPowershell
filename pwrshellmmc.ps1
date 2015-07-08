@@ -223,6 +223,8 @@ Write-host
 Write-host "This script will allow you to:"
 Write-host ""
 Write-host "   **Add / Remove a share" -foregroundcolor white
+Write-host "   **Add / Remove / Modify SMB Share ACL" -foregroundcolor white
+Write-host "   **View / Close SMB Client sessions" -foregroundcolor white
 write-host ""
 
 Do {
